@@ -307,7 +307,7 @@
    ;; TRUE/FALSE are constants, not data columns, and must carry NO complexity: it feeds
    ;; the penalised score, the cScoreExpr< tie-break, removeDominated and resizeMetapop, so
    ;; counting one silently steers the search. Measured: parity3 lost two of three seeds.
-   (and (not (once (is-member $x (quote (AND OR NOT PRIORITIZED-OR TRUE FALSE)))))
+   (and (not (once (is-member $x (quote (AND OR NOT TRUE FALSE)))))
         (== $children ())))
 
 ;; A function to calculate the complexity of a tree.
@@ -324,7 +324,17 @@
 (= (treeComplexity (mkTree (mkNode $a) $children)) ;; AND, OR and NOT have no complexity
    (if (isArgument (mkTree (mkNode $a) $children))
        1
-       (List.sum (List.map treeComplexity $children))))          
+       (List.sum (List.map treeComplexity $children))))
+
+;; A function to calculate the total size of a tree.
+;; Tree size is the total count of vertices/nodes in the tree (operators, arguments, constants).
+
+; (: treeSize (-> (Tree $a) Number))
+
+(= (treeSize (mkNullVex $x)) 0)
+(= (treeSize (mkKnob $inner $lsk $i)) (treeSize $inner))
+(= (treeSize (mkTree (mkNode $a) $children))
+   (+ 1 (List.sum (List.map treeSize $children))))          
 
 ;; NOTE: for future use -- a function to determine the alphabet size of a given tree for computation of complexity ratio
 ;; takes a truth table and adds 3 (for AND,. OR and NOT) to the number of input labels

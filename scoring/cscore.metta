@@ -14,7 +14,7 @@
                        ;; ($_ (println! (Complexity: $cpxy)))
                        ($cCoef (getComplexityCoef $complexityRatio))
                        ($res (updatePenalizedScore (mkCscore $bsum $cpxy (* $cpxy $cCoef) 0.0 (* -1 (pow-math 10 308)))  False))
-                        ;; ($_ (println! (updatePenalizedScore: $res)))
+                       ;; ($_ (println! (updatePenalizedScore: $res)))
                     )
                     $res ))
 )
@@ -22,10 +22,6 @@
 ;; Boolean version - uses scoreTree
 (= (getCscore (mkITable $rows $labels) $tree $complexityRatio $scoreSpace)
    (getCscore $tree $complexityRatio (scoreTree (mkITable $rows $labels) $tree $scoreSpace)))
-
-;; Strategy version - uses mixed-opponent scoreStrategyTree
-(= (getCscore $tree $nGames $complexityRatio $scoreSpace)
-   (getCscore $tree $complexityRatio (scoreStrategyTree $tree $nGames $scoreSpace)))
 ;; getComplexityCoef -- calcualtes the complexity coeffient of a tree   
 ;; takes complexity ratio as input and returns complexity coefficient
 ;; complexity ratio, unless set by the user, has 3.5 for a default value
@@ -94,7 +90,6 @@
 
 ;; (:getScore (-> Cscore Number))
 (= (getScore (mkCscore $scor $cpxy $complexityPenalty $uniformityPenalty $penalizedScore)) $scor)
-
 ; (: getComp (-> Cscore Number))
 (= (getComp (mkCscore $scor $cpxy $complexityPenalty $uniformityPenalty $penalizedScore)) $cpxy)
 
@@ -133,6 +128,20 @@
         (if (isnan-math $pl)
             False
             (or (> $pl $pr) (and (== $pl $pr) (< $cl $cr))))))
+
+;; Overloaded version accepting tree structures to break further ties via tree size
+; (: cScore>= (-> Cscore Cscore (Tree $a) (Tree $a) Bool))
+(= (cScore>= $cs1 $cs2 $tree1 $tree2)
+    (let ($pl $pr $cl $cr $sl $sr $sz1 $sz2)
+         ((getPenScore $cs1) (getPenScore $cs2) (getComp $cs1) (getComp $cs2) (getScore $cs1) (getScore $cs2) (treeSize $tree1) (treeSize $tree2))
+        (if (isnan-math $pl)
+            False
+            (or (> $pl $pr)
+                (and (== $pl $pr)
+                     (or (< $cl $cr)
+                         (and (== $cl $cr)
+                              (or (> $sl $sr)
+                                  (and (== $sl $sr) (< $sz1 $sz2))))))))))
 
 (= (setUniPen (mkCscore $scor $cpxy $complexityPenalty $uniformityPenalty $penalizedScore) $newUniPen)
     (mkCscore $scor $cpxy $complexityPenalty $newUniPen $penalizedScore))
