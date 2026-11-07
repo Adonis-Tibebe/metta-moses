@@ -38,6 +38,7 @@
 !(import! &self ../../../../feature-selection/random-feature-selection)
 !(import! &self ../../../../feature-selection/feature-selection-main)
 
+!(import! &self ../../../../scoring/action-registry)
 !(import! &self ../../../../representation/knob-representation)
 !(import! &self ../../../../representation/lsk)
 !(import! &self ../../../../representation/logical-probe)
@@ -46,8 +47,8 @@
 !(import! &self ../../../../representation/add-logical-knobs)
 !(import! &self ../../../../representation/build-logical)
 !(import! &self ../../../../representation/build-knobs)
-!(import! &self ../../../../representation/knob-mapper)
 
+!(import! &self ../../../../representation/candidate)
 !(import! &self ../../../../representation/representation)
 !(import! &self ../../../../representation/create-representation)
 

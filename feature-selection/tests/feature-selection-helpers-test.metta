@@ -78,8 +78,6 @@
 !(assertEqual (featureSet< 0 (4 2) (1 0)) false)
 !(assertEqual (featureSet< 10000 (4 2) (1 0)) false)
 
-!(assertEqual (insertPair > (2 1) ((4 0) (1 3))) ((4 0) (2 1) (1 3)))                   ;; fist value is score and second one feature index
-!(assertEqual (insertPair > (2 1) ((4 0) (2 4) (1 3))) ((4 0) (2 1) (2 4) (1 3)))       
 !(assertEqual (insertPair > (featureSet< 0) (2 (1 0)) ((4 (1 0)) (2 (4 1)) (1 (3 1)))) ((4 (1 0)) (2 (1 0)) (2 (4 1)) (1 (3 1))))
 
 !(assertEqual (marginalProbs 10 ((A 4) (B 6))) ((A 0.4) (B 0.6)))
@@ -94,8 +92,6 @@
 !(assertEqual (mutualInformation (cons A (cons A (cons A ()))) (cons X (cons Y (cons Z ())))) 0.0)
 !(assertEqual (mutualInformation (cons A (cons B (cons C ()))) (cons X (cons Y (cons Z ())))) 1.585)
 
-!(assertEqual (insertPair > (2 1) ((4 0) (1 3))) ((4 0) (2 1) (1 3)))                   ;; fist value is score and second one feature index
-!(assertEqual (insertPair > (2 1) ((4 0) (2 4) (1 3))) ((4 0) (2 1) (2 4) (1 3)))       
 
 !(assertEqual (isEqual (A B C) (A B C)) True)
 !(assertEqual (isEqual (A B C) (C A B)) True)
@@ -199,4 +195,7 @@
 !(assertEqual (< (calculateConfidence 2 10 0.1) (calculateConfidence 2 20 0.1)) True)  ;; bigger dataset → higher confidence
 !(assertEqual (calculateConfidence 1 0 0.1) 0.0)  ;; No features -> confidence 0
 
-
+!(assertEqual (indicesToBits () 5) (List.generate 5 0))  ;; no initial features -> every bit off
+!(assertEqual (indicesToBits (0 2 4) 5) (1 0 1 0 1))
+!(assertEqual (indicesToBits (3) 4) (0 0 0 1))
+!(assertEqual (bitsToIndices (indicesToBits (0 2 4) 5) 0 ()) (0 2 4))  ;; inverse of bitsToIndices

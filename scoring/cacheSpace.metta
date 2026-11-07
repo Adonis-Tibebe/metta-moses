@@ -11,9 +11,39 @@
 ;; it is NOT cleared per generation, mirroring the old &bscoreCache lifetime.
 !(bind! &subtreeCache (new-space))
 
+;; Complete candidate scores are cached separately from Boolean subtree values
+;; so actual-evaluation accounting can distinguish a new scorer call from reuse
+;; of an already scored program. The scoring context is part of the key because
+;; one tree can score differently for another table, horizon, or ratio.
+!(bind! &candidateScoreCache (new-space))
+
+;; Return a cached complete-program score for this context, or () on a miss.
+(= (cachedCandidateScore $context $tree)
+   (let $matches
+        (collapse
+          (match &candidateScoreCache
+                 (candidateScore $context $tree $score)
+                 $score))
+     (if (== $matches ()) () (car-atom $matches))))
+
+;; Store a complete-program score only when the context/tree key is new.
+(= (cacheCandidateScore $context $tree $score)
+   (if (== (cachedCandidateScore $context $tree) ())
+       (add-atom &candidateScoreCache
+                 (candidateScore $context $tree $score))
+       True))
+
+;; Remove every atom from a cache space. Collapse the matches first, then
+;; remove: never change the space while match iterates it. (clearSpace in
+;; general-helpers removes inside get-atoms, so it is not used here.)
+(= (emptySpace $space)
+   (let $entries (collapse (match $space $e $e))
+     (map-atom $entries $e (remove-atom $space $e))))
+
+;; Empty the candidate-score cache. Callers ignore the result.
+(= (resetCandidateScoreCache) (emptySpace &candidateScoreCache))
+
 ;; Empty the subtree cache. A run scores ONE fixed table, and every entry is
 ;; valid only for that table -- call this before scoring against a DIFFERENT
 ;; table in the same process (e.g. a test file exercising two tables).
-(= (resetSubtreeCache)
-   (let $entries (collapse (match &subtreeCache $e $e))
-     (map-atom $entries $e (remove-atom &subtreeCache $e))))
+(= (resetSubtreeCache) (emptySpace &subtreeCache))
