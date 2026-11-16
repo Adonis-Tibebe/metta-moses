@@ -1,54 +1,38 @@
-;; Type definitions and functions related to beahvioral socre, behavioral complexity score and turth table behavioral score.
+;; Type definitions and functions for the behavioral score, the behavioral complexity score and the truth table behavioral score.
 ;; Behavioral score is a list of numbers, where each number represents the score of a particular output. 
 ;; For boolean expressions, the score is either 0 or -1. Therefore, this behavioral score is a list of 0s and -1s.
 ;; In the C++ version, floating point scores and numbers different than -1 and 0 are used as a result of table compression 
 ;;  and weighting options. However, we don't have that yet.
 
-; (: BehavioralScore Type)
-; ;(: mkBScore (-> (List Number) BehavioralScore))
-
-;; Subtrace two behavioral scores
-;(: BScore.sub (-> BehavioralScore BehavioralScore BehavioralScore))
-(= (BScore.sub (mkBScore $bs1) (mkBScore $bs2))
-   (if (not (== (List.length $bs1) (List.length $bs2)))
-       (Error ($bs1 $bs2) "Incompatible behavioral scores")
-       (mkBScore (List.sub $bs1 $bs2))))
+;; (: BehavioralScore Type)
+;; (: mkBScore (-> (List Number) BehavioralScore))
 
 ;; Sums the behavioral score to get a single number.
-;(: sumBScore (-> BehavioralScore Number))
+;; (: sumBScore (-> BehavioralScore Number))
 (= (sumBScore (mkBScore $bs)) (List.sum $bs))
 
-;; Count wins in a BehavioralScore for game strategies
-;; For game strategies: 1.0 = win, -1.0 = loss, 0.0 = draw
-;; Returns the total number of wins
-;(: countWins (-> BehavioralScore Number))
-(= (countWins (mkBScore ())) 0)
-(= (countWins (mkBScore (cons $head $tail)))
-   (if (== $head 1.0)
-       (+ 1 (countWins (mkBScore $tail)))
-       (countWins (mkBScore $tail))))
-
-;; Input table with rows, columns and labels of the columns
-;; An Input Table is just a list of lists.
-;(: ITable (-> $a Type))
-;(: mkITable (-> (List (List $a)) (List Symbol) (ITable $a)))
+;; Input table with rows, columns and labels of the columns.
+;; An Input Table is just a list of lists, stored COLUMN-major: the payload is
+;; the list of columns and its i-th element is the column labelled by the i-th
+;; label. The last column is the output column.
+;; (: ITable (-> $a Type))
+;; (: mkITable (-> (List (List $a)) (List Symbol) (ITable $a)))
 
 ;; TruthTableBScore is a type that contains the complexity coefficient, size of the table and the input table itself.
 ;; Using this type we can get behavioral score and behavioral complexity score.
 ;; This table is the cTruthTableBScore in the C++. The C stands for compressed. But omitted here since the table won't be compressed during this version.
 ;;  It is left as future work.
-;(: TruthTableBScore (-> $a Type))
-;(: mkTruthTableBScore (-> Number Number (ITable $a) (TruthTableBScore $a)))
+;; (: TruthTableBScore (-> $a Type))
+;; (: mkTruthTableBScore (-> Number Number (ITable $a) (TruthTableBScore $a)))
 
-;; A constuctor for truthTableBScore to assign the size of the table on it's own.
+;; A constructor for truthTableBScore that sets the size of the table itself.
 ;; INFO: This could have been done by overloading the mkTruthTableBScore function, but
 ;;  that has shown to be problematic for certain cases. Best to avoid it whenever we can.
-;(: createTruthTableBScore (-> Number (ITable $a) (TruthTableBScore $a)))
-(= (createTruthTableBScore $complexityCoeff (mkITable $itable $labels)) (mkTruthTableBScore $complexityCoeff (List.length $itable) (mkITable $itable $labels)))
+;; (: createTruthTableBScore (-> Number (ITable $a) (TruthTableBScore $a)))
+(= (createTruthTableBScore $complexityCoeff (mkITable $itable $labels)) (mkTruthTableBScore $complexityCoeff (ITable.rowCount $itable) (mkITable $itable $labels)))
+(= (createTruthTableBScore $complexityCoeff (mkCTable $map $labels $totalWeight))
+   (mkTruthTableBScore $complexityCoeff (Map.length $map) (mkCTable $map $labels $totalWeight)))
 
-;; Return the table from truth table bscore
-;(: getTable (-> (TruthTableBScore $a) (ITable $a)))
-(= (getTable (mkTruthTableBScore $compCoeff $size $table)) $table)
 
 ;; Function to give a behavioral score for a given tree.
 ;; It takes the Input table and the tree then scores the input table on each row. After which it builds the behavioral score.
@@ -57,66 +41,130 @@
 ;;         $labels - Column labels
 ;;         $tree - The tree to be scored
 ;;
-;; Returns: Beahvioral score for the given tree.
-; (: scoreTree (-> (ITable $a) (Tree $a) BehavioralScore))
-(= (scoreTree (mkITable $table $labels) $tree $cacheSpace)
+;; Returns: Behavioral score for the given tree.
+;; (: scoreTree (-> (ITable $a) (Tree $a) $cacheSpace BehavioralScore))
+;; The score is derived entirely from the columnar subtree cache: evalSubtree
+;; evaluates the tree once into a per-row boolean vector, memoizing every
+;; subtree — including the root expression — in &subtreeCache. The root entry
+;; therefore serves as the whole-tree memo, so no separate whole-tree cache
+;; read/write is needed. $cacheSpace is kept for signature compatibility with
+;; existing callers but is no longer used.
+(= (scoreTree (mkITable $columns $labels) $tree $cacheSpace)
    (if (== $tree (mkTree (mkNode AND) ()))
-       (worstPossibleScore (createTruthTableBScore $compCoeff (mkITable $table $labels)))
-       (chain (collapse (match $cacheSpace 
-               ($tree $bscore) 
-               $bscore))
-           $val 
-           (if (== $val ())
-               (let* (
-                   ($expTree (preOrder $tree))
-                   ($scoreList (map-atom $table $ts (scoreTreeHelper $labels $expTree $ts)))
-                   ;; ($_ (println! (ScoreList: $scoreList)))
-                   ($length (List.length $labels))
-                   ($outputs (List.flatten (List.map (List.drop (- $length 1)) $table)))
-                   ($bScore (List.zipWith compareAndScore $scoreList $outputs))
-                   ($result (mkBScore $bScore))
-                   ($_ (add-atom $cacheSpace ($tree $result)))
-               )
-               $result)
-               (car-atom $val)
-           ))))
+       ;; the empty AND tree scores worst (-1) on every row
+       (mkBScore (List.repeat (ITable.rowCount $columns) -1))
+       (let* (
+           ($expTree (preOrderExp $tree))
+           ($rowCount (ITable.rowCount $columns))
+           ($scoreList (evalSubtree $expTree (mkITable $columns $labels) $rowCount))
+           ($length (List.length $labels))
+           ;; the output column is the last element of the column-major payload
+           ($outputs (index-atom $columns (- $length 1)))
+           ($bScore (List.zipWith compareAndScore $scoreList $outputs))
+       )
+       (mkBScore $bScore))))
 
-(= (scoreTreeHelper $labels $expTree $table) (let $a (replaceVarsWithTruth ($labels $expTree) $table) (evaluate $a)))
+;; Score tree on compressed table (CTable)
+;; Classic C++ Reference: moses/scoring/bscores.cc#L276-L297 (ctruth_table_bscore::operator())
+;; For each unique pattern in cTable:
+;;   Evaluate candidate tree on pattern.
+;;   If prediction is True, error is negative weight.
+;;   If prediction is False, error is positive weight.
+;;   bscore component is (- error).
+(= (scoreTree (mkCTable $map $labels $totalWeight) $tree $cacheSpace)
+   (if (== $tree (mkTree (mkNode AND) ()))
+       ;; empty AND tree scores worst possible score across patterns, matching mkITable's convention
+       (let $items (Map.items $map)
+         (mkBScore (map-atom $items ($pat ($pos $neg)) (- 0 (abs-math (- $pos $neg))))))
+       (let* (
+              ($expTree (preOrderExp $tree))
+              ($targetIdx (- (List.length $labels) 1))
+              ($featureLabels (List.removeAtIdx $labels $targetIdx))
+              ($patterns (Map.keys $map))
+              ($patternCount (size-atom $patterns))
+              ($featIndices (genList (- (List.length $featureLabels) 1)))
+              ($patternCols (map-atom $featIndices $j (map-atom $patterns $pat (index-atom $pat $j))))
+              ($preds (evalSubtree $expTree (mkITable $patternCols $featureLabels) $patternCount))
+              ($items (Map.items $map))
+              ($bScore (List.zipWith compareAndScoreCTable $preds $items))
+             )
+         (mkBScore $bScore))))
+
+;; Evaluate an expression on one row: put the row's truth values in place of the labels, then evaluate.
+(= (scoreTreeHelper $labels $expTree $row) (let $a (replaceVarsWithTruth ($labels $expTree) $row) (evaluate $a)))
 ;; Return the best possible BehavioralScore given the size of the table.
-;;  Altohugh the whole table is given for consistency and to distinguish 
+;;  Although the whole table is given for consistency and to distinguish 
 ;;  from the same function that works on BehavioralCScore, it uses only the size of the table.
-;(: bestPossibleScore (-> (TruthTableBScore $a) BehavioralScore))
-(= (bestPossibleScore (mkTruthTableBScore $compCoeff $size $table)) (mkBScore (List.repeat $size 0)))
-
+;; Classic C++ Reference: moses/scoring/bscores.cc#L350-L375
+;; (: bestPossibleScore (-> (TruthTableBScore $a) BehavioralScore))
+(= (bestPossibleScore (mkTruthTableBScore $compCoeff $size (mkITable $itable $labels)))
+   (mkBScore (List.repeat $size 0)))
+(= (bestPossibleScore (mkTruthTableBScore $compCoeff $size (mkCTable $map $labels $totalWeight)))
+   (let $items (Map.items $map)
+     (mkBScore (map-atom $items ($pat ($pos $neg)) (- 0 (min $pos $neg))))))
 
 ;; Return the worst possible BehavioralScore given the size of the table.
-;;  Altohugh the whole table is given for consistency and to distinguish 
+;;  Although the whole table is given for consistency and to distinguish 
 ;;  from the same function that works on BehavioralCScore, it uses only the size of the table.
-;(: worstPossibleScore (-> (TruthTableBScore $a) BehavioralScore))
-(= (worstPossibleScore (mkTruthTableBScore $compCoeff $size $table)) (mkBScore (List.repeat $size -1)))
+;; Classic C++ Reference: moses/scoring/bscores.cc#L389-L404
+;; (: worstPossibleScore (-> (TruthTableBScore $a) BehavioralScore))
+(= (worstPossibleScore (mkTruthTableBScore $compCoeff $size (mkITable $itable $labels)))
+   (mkBScore (List.repeat $size -1)))
+(= (worstPossibleScore (mkTruthTableBScore $compCoeff $size (mkCTable $map $labels $totalWeight)))
+   (let $items (Map.items $map)
+     (mkBScore (map-atom $items ($pat ($pos $neg)) (- 0 (abs-math (- $pos $neg)))))))
 
-;; When we have a compressed tree, the min improvement 
-;;  will be calculated. For now it's fixed.
-;(: minImprove (-> (TruthTableBScore $a) Number))
-(= (minImprove $_) 0.5)
+;; Helper function to calculate the minimum non-zero weight difference across patterns in a CTable.
+;; Mirrors C++ moses/scoring/bscores.cc#L406-L425 (ctruth_table_bscore::min_improv())
+(= (minPatternWeight () $minW) $minW)
+(= (minPatternWeight (cons ($pat ($pos $neg)) $tail) $minW)
+   (let $w (abs-math (- $pos $neg))
+     (if (> $w 0)
+         (if (== $minW ())
+             (minPatternWeight $tail $w)
+             (if (< $w $minW)
+                 (minPatternWeight $tail $w)
+                 (minPatternWeight $tail $minW)))
+         (minPatternWeight $tail $minW))))
 
-;; Score tree helepr function that compares two values and returns a number instead of a bool.
+;; Minimum score improvement threshold for a table.
+;; Classic C++ Reference: moses/scoring/bscores.cc#L406-L425 (ctruth_table_bscore::min_improv())
+;; Returns 0.5 * smallest non-zero abs(pos - neg) weight difference across patterns.
+;; (: minImprove (-> (TruthTableBScore $a) Number))
+(= (minImprove (mkBCScore $truthTableBScore))
+   (minImprove $truthTableBScore))
+(= (minImprove (mkTruthTableBScore $compCoeff $size (mkITable $itable $labels)))
+   0.5)
+(= (minImprove (mkTruthTableBScore $compCoeff $size (mkCTable $map $labels $totalWeight)))
+   (let* (
+          ($items (Map.items $map))
+          ($minW (minPatternWeight $items ()))
+         )
+     (if (== $minW ()) 0.5 (* 0.5 $minW))))
+
+;; Score tree helper function that compares two values and returns a number instead of a bool.
 ;; It returns 0 if the values are equal, -1 they're not equal.
-;(: compareAndScore (-> $a $a Number))
+;; (: compareAndScore (-> $a $a Number))
 (= (compareAndScore $a $b) (if (== $a $b) 0 -1))
 
-;; A wrapper function to return the complexity a tree.
-;(: (getComplexity (-> (Tree $a) Number)))
-(= (getComplexity $tree) (treeComplexity $tree))
+;; Score tree helper function for compressed table (CTable) that compares a prediction
+;; against an item ($pat ($pos $neg)) of a pattern and returns the penalty.
+;; If prediction is True, error is negative weight (false positive penalty: - neg_weight).
+;; If prediction is False, error is positive weight (false negative penalty: - pos_weight).
+;; Classic C++ Reference: moses/scoring/bscores.cc#L276-L297
+;; (: compareAndScoreCTable (-> Bool ($a (Number Number)) Number))
+(= (compareAndScoreCTable $pred ($pat ($pos $neg)))
+   (- 0 (if $pred $neg $pos)))
 
-;; Replace every occurence of a lable inside an expression with a truth value.
+
+;; Replace every occurrence of a label inside an expression with a truth value.
 ;;
 ;; Params: $boolExpr - The expression to be modified
 ;;         $b - The truth value to replace with
 ;;         $l - The variable to be replaced
 ;;
 ;; Returns: Modified version of the boolean expression.
-;(: replaceVarWithTruth (-> (Bool Symbol) $a $a))
+;; (: replaceVarWithTruth (-> (Bool Symbol) $a $a))
 (= (replaceVarWithTruth ($b $l) $boolExpr)
    (if (== (get-metatype $boolExpr) Expression) ;; If not symbol or Grounded
        (let ($h $t) (decons-atom $boolExpr)
@@ -128,7 +176,7 @@
                       (cons-atom $h $t')))))
        (if (== $boolExpr $l) $b (if (once (is-member $boolExpr (AND OR))) ($boolExpr) $boolExpr))))
 
-;; Replace ever occurence of all labels (boolean variables) 
+;; Replace every occurrence of all labels (boolean variables) 
 ;;  inside an expression with their corresponding truth values.
 ;;
 ;; Params: $boolExpr - The expression to be modified
@@ -136,73 +184,24 @@
 ;;         $bList - list of the corresponding truth values to replace the variables with
 ;;
 ;; Returns: Modified version of the boolean expression.
-;(: replaceVarsWithTruth (-> ((List Symbol) Expression) (List Bool) Expression))
+;; (: replaceVarsWithTruth (-> ((List Symbol) Expression) (List Bool) Expression))
 (= (replaceVarsWithTruth ($lList $boolExpr) $bList)
    (let $blList (List.zip $bList $lList) (List.foldl replaceVarWithTruth $boolExpr $blList)))
 
-;; Behavioral complexity score. Although this type adds no additional atttributes to the truth table bscore,
+;; Behavioral complexity score. Although this type adds no additional attributes to the truth table bscore,
 ;;  It is used to distinguish between the two types. The behavioral complexity score is treated differently than the latter one.
 ;;  Instead of a list of scores in the BehavioralScore this type deals with a single score values.
-;(: BehavioralCScore (-> $a Type))
-;(: mkBCScore (-> (TruthTableBScore $a) (BehavioralCScore $a)))
+;; (: BehavioralCScore (-> $a Type))
+;; (: mkBCScore (-> (TruthTableBScore $a) (BehavioralCScore $a)))
 
 ;; Return the best possible Behavioral composite score given the table. 
 ;;  Although the whole table is given for consistency and to distinguish 
 ;;  from the same function that works on BehavioralScore, it only needs the size of the table.
-;(: bestPossibleScore (-> (BehavioralCScore $a) Number))
+;; (: bestPossibleScore (-> (BehavioralCScore $a) Number))
 (= (bestPossibleScore (mkBCScore $truthTableBScore)) (let (mkBScore $bscore) (bestPossibleScore $truthTableBScore) (List.sum $bscore)))
 
 ;; Return the worst possible Behavioral composite score given the table.
 ;;  Although the whole table is given for consistency and to distinguish
 ;;  from the same function that works on BehavioralScore, it only needs the size of the table.
-;(: worstPossibleScore (-> (BehavioralCScore $a) Number))
+;; (: worstPossibleScore (-> (BehavioralCScore $a) Number))
 (= (worstPossibleScore (mkBCScore $truthTableBScore)) (let (mkBScore $bscore) (worstPossibleScore $truthTableBScore) (List.sum $bscore)))
-
-;; When we have a compressed tree, the min improvement
-;;  will be calculated. For now it's fixed.
-;(: minImprove (-> (BehavioralCScore $a) Number))
-(= (minImprove (mkBCScore $truthTableBScore) (minImprove $truthTableBScore)))
-
-
-;;------------------------------------------------------------
-;; getArgLabels
-;;------------------------------------------------------------
-;;  Extracts argument labels (all but the last) from an ITable.
-;;
-;;  The ITable structure is:
-;;    (mkITable $rows $labels)
-;;      where $rows   = list of data rows (each a list of values)
-;;            $labels = list of column labels (symbols)
-;;
-;;  This function returns an expressison of all column labels except the last one,
-;;  which is typically the output label in a truth table.
-;;
-;;  Example:
-;;    (mkITable
-;;      (cons (cons True (cons False (cons True ())))
-;;            (cons (cons False (cons True (cons False ()))) ()))
-;;      (cons 'A (cons 'B (cons 'Y ()))))
-;;
-;;    Labels:   +---+---+---+
-;;              | A | B | Y |
-;;              +---+---+---+
-;;    Output:   ('A 'B)
-;;
-;;   
-;;      +---+---+---+
-;;      | A | B | Y |
-;;      +---+---+---+
-;;      | T | F | T |
-;;      | F | T | F |
-;;      +---+---+---+
-;;      ^^^^^^^^^^^^
-;;      getArgLabels returns only the input labels: [A, B]
-;;
-;;  Usage:
-;;    (getArgLabels $itable)  ; returns (cons 'A (cons 'B ()))
-;;
-;(:getArgLabels (-> (ITable $a) (List Symbol)))
-(= (getArgLabels (mkITable $rows $labels))
-   (let $args
-        (List.takeN (- (List.length $labels) 1) $labels )
-        (List.listToExpr $args)))

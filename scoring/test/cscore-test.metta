@@ -1,21 +1,16 @@
 !(import! &self ../../utilities/general-helpers)
 !(import! &self ../../utilities/list-methods)
+!(import! &self ../../utilities/map)
 !(import! &self ../../utilities/tree)
 
-!(import! &self ../../scoring/strategy-score-cache)
 !(import! &self ../../scoring/cacheSpace)
-!(import! &self ../../examples/tic-tac-toe/tic-tac-toe-helpers)
-!(import! &self ../../examples/tic-tac-toe/random-player)
-!(import! &self ../../examples/tic-tac-toe/strategy-scoring)
-!(import! &self ../../examples/tic-tac-toe/minimax-player)
-!(import! &self ../../examples/tic-tac-toe/game-engine)
-!(import! &self ../../examples/tic-tac-toe/moves)
-!(import! &self ../../examples/tic-tac-toe/moses-player)
 
 
 !(import! &self ../fitness)
+!(import! &self ../boolean-ops)
 !(import! &self ../bscore)
 !(import! &self ../cscore)
+!(import! &self ../precision-bscore)
 
 ;; Tests for cScoreToExpr
 !(assertEqual (cScoreToExpr (mkCscore 0.0 0.0 0.0 0.0 0.0)) ((0.0 0.0 0.0 0.0 0.0)))
@@ -31,21 +26,23 @@
 
 (= (ttable1)
     (mkITable
-        (cons (cons True (cons False (cons True ())))
-        (cons (cons True (cons True (cons True ()))) ()))
+        (cons (cons True (cons True ()))
+        (cons (cons False (cons True ()))
+        (cons (cons True (cons True ())) ())))
         (cons A (cons B (cons O ())))))
 
 (= (ttable2)
     (mkITable
-        (cons (cons True (cons True (cons True ())))
-        (cons (cons True (cons False (cons False ())))
-        (cons (cons False (cons True (cons False ())))
-        (cons (cons False (cons False (cons False ()))) ()))))
+        (cons (cons True (cons True (cons False (cons False ()))))
+        (cons (cons True (cons False (cons True (cons False ()))))
+        (cons (cons True (cons False (cons False (cons False ())))) ())))
         (cons A (cons B (cons Output ())))))
 
 
-!(assertEqual (getCscore (ttable1) (buildTree (AND A B)) 2.0 &bscoreCache) (mkCscore -1 2 1.0 0.0 -2.0))
-!(assertEqual (getCscore (ttable1) (buildTree (OR A B)) 4 &bscoreCache) (mkCscore 0 2 0.5 0.0 -0.5))
+;; candidates ride under quote: this file loads boolean-ops' AND/OR/NOT
+;; eval clauses, so a bare (AND A B) at a call site would compile as a call.
+!(assertEqual (getCscore (ttable1) (buildTree (quote (AND A B))) 2.0 &bscoreCache) (mkCscore -1 2 1.0 0.0 -2.0))
+!(assertEqual (getCscore (ttable1) (buildTree (quote (OR A B))) 4 &bscoreCache) (mkCscore 0 2 0.5 0.0 -0.5))
 ;; the results of the following two tests will be the same as the above two because the trees are the same because it uses the cacheSpace
 ; ! (assertEqual (getCscore ttable2 (buildTree (AND A B)) 2.0) (mkCscore 0 2 1.0 0 -1.0))
 ; ! (assertEqual (getCscore ttable2 (buildTree (OR A B)) 1) (mkCscore -2 2 2.0 0 -4.0))
@@ -116,12 +113,62 @@
   ($objResult (apply < $score3 $score4))
 ) (== $exprResult $objResult)) True)
 
-(= (Strategy)
-   (mkTree (mkNode PRIORITIZED-OR)
-      (cons (mkTree (mkNode playcenter) ())
-            (cons (mkTree (mkNode playside) ())
-                  (cons (mkTree (mkNode playcorner) ()) ())))))
+;; ============================================================
+;; Tests for cScore>= (standard 2-arg and overloaded 4-arg)
+;; ============================================================
 
-; Strategy scoring now uses mixed opponents (random + minimax)
-!(assertEqual (getCscore (Strategy) 5 3.5 &strategyScoreCache)
-                (mkCscore 2.0 3 0.8571428571428571 0.0 1.1428571428571428))
+;; 1. Standard 2-arg: Penalized score strictly greater
+!(assertEqual (cScore>= (mkCscore 0.0 2 0.1 0.0 -0.5) (mkCscore 0.0 2 0.1 0.0 -0.8)) True)
+!(assertEqual (cScore>= (mkCscore 0.0 2 0.1 0.0 -0.8) (mkCscore 0.0 2 0.1 0.0 -0.5)) False)
+
+;; 2. Standard 2-arg: Penalized score tied -> lower complexity wins
+!(assertEqual (cScore>= (mkCscore 0.0 2 0.1 0.0 -0.5) (mkCscore 0.0 3 0.1 0.0 -0.5)) True)
+!(assertEqual (cScore>= (mkCscore 0.0 3 0.1 0.0 -0.5) (mkCscore 0.0 2 0.1 0.0 -0.5)) False)
+
+;; 3. Overloaded 4-arg: Penalized score and complexity tied -> higher raw score wins
+!(assertEqual (cScore>= (mkCscore -2.0 3 0.1 0.0 -3.0) 
+                        (mkCscore -3.0 3 0.1 0.0 -3.0) 
+                        (buildTree (quote (AND A B C))) 
+                        (buildTree (quote (AND A B C)))) True)
+!(assertEqual (cScore>= (mkCscore -3.0 3 0.1 0.0 -3.0) 
+                        (mkCscore -2.0 3 0.1 0.0 -3.0) 
+                        (buildTree (quote (AND A B C))) 
+                        (buildTree (quote (AND A B C)))) False)
+
+;; 4. Overloaded 4-arg: Penalized score, complexity, AND raw score tied -> smaller tree size wins
+;; Tree 1: (AND A B C) -> complexity 3, treeSize 4
+;; Tree 2: (AND A (OR (NOT B) (NOT C))) -> complexity 3, treeSize 7
+!(assertEqual (cScore>= (mkCscore -3.0 3 0.1 0.0 -3.0) 
+                        (mkCscore -3.0 3 0.1 0.0 -3.0) 
+                        (buildTree (quote (AND A B C))) 
+                        (buildTree (quote (AND A (OR (NOT B) (NOT C)))))) True)
+!(assertEqual (cScore>= (mkCscore -3.0 3 0.1 0.0 -3.0) 
+                        (mkCscore -3.0 3 0.1 0.0 -3.0) 
+                        (buildTree (quote (AND A (OR (NOT B) (NOT C))))) 
+                        (buildTree (quote (AND A B C)))) False)
+
+;; ====================================================================
+;; Compressed Table Test: getCscore with (mkCTable ...)
+;; ====================================================================
+
+!(let* (
+        ($_ (resetSubtreeCache))
+        ($ct (mkCTable (cons ((True True) (1 0))
+                       (cons ((True False) (0 1))
+                       (cons ((False True) (0 1))
+                       (cons ((False False) (0 1)) ()))))
+                       (A B Output) 4))
+        ($cand (quote (AND A B)))
+       )
+   (assertEqual (getCscore $ct (buildTree $cand) 2.0 &bscoreCache) (mkCscore 0 2 1.0 0.0 -1.0)))
+
+;; Test weighted cTable getCscore with fractional weights:
+;; Pattern (True) has (pos:0.5, neg:1.5); Pattern (False) has (pos:2.0, neg:2.5)
+;; Candidate (mkTree (mkNode A) ()) predicts True on (True) [penalty -1.5], False on (False) [penalty -2.0]
+;; bscore sum = -3.5, complexity = 1, complexityRatio = 2.0 (coef = 0.5), penalized score = -3.5 - 0.5 = -4.0
+!(let* (
+        ($_ (resetSubtreeCache))
+        ($ct (mkCTable (cons ((True) (0.5 1.5)) (cons ((False) (2.0 2.5)) ())) (A Output) 6.5))
+        ($tree (mkTree (mkNode A) ()))
+       )
+   (assertEqual (getCscore $ct $tree 2.0 &bscoreCache) (mkCscore -3.5 1 0.5 0.0 -4.0)))
